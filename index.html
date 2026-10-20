@@ -35,12 +35,15 @@ canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
 .row select{flex:1;font:inherit;padding:6px 8px;border-radius:8px;border:1px solid var(--mut);background:transparent;color:var(--fg)}
 #panel button{font:inherit;padding:10px 22px;border-radius:999px;border:1px solid var(--mut);background:transparent;color:var(--fg);margin-right:10px}
 #panel .btns{margin-top:28px}
+#panel button:disabled{opacity:.4}
+#mp{position:absolute;left:50%;transform:translateX(-50%);bottom:76px;display:none;z-index:3;font:inherit;font-size:15px;padding:9px 20px;border-radius:999px;border:1px solid var(--mut);background:color-mix(in srgb,var(--bg) 80%,transparent);color:var(--fg)}
 #panel .hint{font-size:13px;color:var(--mut);font-style:italic;margin-top:22px}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="ttl">S33 - M87</div>
+<button id="mp">Save MIDI</button>
 <div id="lab">Rotate the sphere</div>
 <div id="panel" aria-hidden="true"><div class="in"><h1>Set the controls</h1><div id="rows"></div><div class="btns"><button id="done">Done</button><button id="reset">Reset</button></div><p class="hint">Press and hold the top edge of the screen to come back here. Entry times, key and mode apply from the next touch of the sphere.</p></div></div>
 <script>
@@ -97,6 +100,8 @@ function unlock(){
 }
 function startTex(){
   if(!ctx)return;
+  REC=S.midi>=0?{t0:ctx.currentTime,bpm:S.bpm,ev:{drone:[],pad:[],organ:[],arp:[],rhythm:[]}}:null;
+  mp.style.display='none';
   const v=[R[6],R[7],R[8]]; /* punto della sfera rivolto verso di te */
   const key=S.key>=0?S.key:Math.floor((Math.atan2(v[0],v[2])+Math.PI)/(2*Math.PI)*12)%12;
   const mi=S.mode>=0?S.mode:Math.min(4,Math.floor((v[1]+1)/2*5));
@@ -125,7 +130,7 @@ function startTex(){
     const lg=ctx.createGain();lg.gain.value=.25;l.connect(lg);lg.connect(mod.gain);
     const pan=ctx.createStereoPanner();pan.pan.value=(rnd()-.5)*1.5;o.connect(env);env.connect(mod);mod.connect(pan);pan.connect(lp);
     o.start();l.start();nodes.push(o,l);
-    return{o,env,l,df};
+    return{o,env,l,df,re:rOn('drone',nt(df,dg),t0,60,0)};
   };
   const voices=defs.map(df=>mkVoice(df,0,0,df.at+8));
   tex={out,nodes,hue:(key/12*300+200)%360,timer:0,lv:{d:lvD,a:lvA,o:lvO}};
@@ -134,7 +139,7 @@ function startTex(){
     const opts=[0,3,4,5,1,5,2].filter(x=>x!==deg);
     deg=opts[Math.floor(rnd()*opts.length)];
     const t=ctx.currentTime;
-    voices.forEach((v,i)=>{const d=i*1.2,o=v.o,l=v.l;v.env.gain.cancelScheduledValues(t);v.env.gain.setValueAtTime(v.env.gain.value,t);v.env.gain.setTargetAtTime(0,t+d,S.chRel/3);setTimeout(()=>{try{o.stop();l.stop()}catch(e){}},(d+S.chRel*2+4)*1000);voices[i]=mkVoice(v.df,deg,d,S.chAtk)});
+    voices.forEach((v,i)=>{const d=i*1.2,o=v.o,l=v.l;v.env.gain.cancelScheduledValues(t);v.env.gain.setValueAtTime(v.env.gain.value,t);rOff(v.re,t+d+S.chRel*.9);v.env.gain.setTargetAtTime(0,t+d,S.chRel/3);setTimeout(()=>{try{o.stop();l.stop()}catch(e){}},(d+S.chRel*2+4)*1000);voices[i]=mkVoice(v.df,deg,d,S.chAtk)});
     tex.timer=setTimeout(next,S.chord*(.7+rnd()*.6)*1000);
   };
   tex.timer=setTimeout(next,S.chord*(.7+rnd()*.6)*1000);
@@ -144,6 +149,7 @@ function startTex(){
   const ct=[0,2,4,7,9];let idx=1;
   const pluck=()=>{
     const t=ctx.currentTime+.03,f=mtof(note(deg,ct[idx],1));
+    const ae=rOn('arp',note(deg,ct[idx],1),t,75,0);if(ae)ae.e=t+1.2;
     const o=ctx.createOscillator(),o2=ctx.createOscillator(),e=ctx.createGain(),g2=ctx.createGain(),fl=ctx.createBiquadFilter(),pn=ctx.createStereoPanner();
     o.type='sine';o2.type='triangle';o.frequency.value=f;o2.frequency.value=f*2;g2.gain.value=.18;
     fl.type='lowpass';fl.frequency.value=1400+en*1200;pn.pan.value=(ra()-.5)*1.6;
@@ -174,14 +180,14 @@ function startTex(){
       const pn=ctx.createStereoPanner();pn.pan.value=(i-1)*.5+(c<0?-.25:.25);
       o.connect(pn);pn.connect(g);o.start();os.push(o);nodes.push(o);
     })});
-    return{g,os};
+    return{g,os,rev:[0,2,4].map(d=>rOn('organ',nt({d,o:1},dg),t0,55,0))};
   };
   let org=null,od=-1;
   const orgTick=()=>{
     if(tex!==me)return;
     if(deg!==od){
       const t=ctx.currentTime;
-      if(org){const p=org;p.g.gain.cancelScheduledValues(t);p.g.gain.setValueAtTime(p.g.gain.value,t);p.g.gain.setTargetAtTime(0,t,S.chRel/3);setTimeout(()=>p.os.forEach(o=>{try{o.stop()}catch(e){}}),(S.chRel*2+4)*1000)}
+      if(org){const p=org;p.rev.forEach(e=>rOff(e,t+S.chRel*.9));p.g.gain.cancelScheduledValues(t);p.g.gain.setValueAtTime(p.g.gain.value,t);p.g.gain.setTargetAtTime(0,t,S.chRel/3);setTimeout(()=>p.os.forEach(o=>{try{o.stop()}catch(e){}}),(S.chRel*2+4)*1000)}
       org=mkOrgan(deg,S.chAtk);od=deg;
     }
     setTimeout(orgTick,2000);
@@ -197,6 +203,8 @@ function startTex(){
   const pats=[{k:[1,0,0,0,0,0,0,0],p:[0,0,0,0,1,0,0,0],h:[0,0,0,0,0,0,0,0]},{k:[1,0,0,1,0,0,1,0],p:[0,0,1,0,0,1,0,0],h:[0,0,0,0,1,0,0,1]},{k:[1,0,0,0,0,1,0,0],p:[0,0,1,0,0,0,1,1],h:[0,1,0,1,0,1,0,1]}];
   let rs=0,rt=0,rp=0;
   const hit=(k,t,v)=>{
+    const hv=Math.min(127,Math.round(v*(k===2?1500:k===0?450:600)));
+    const re=rOn('rhythm',k===0?36:k===2?42:note(deg,[0,4,2][rs%3],1),t,Math.max(30,hv),k===1?0:9);if(re)re.e=t+(k===2?.12:k===0?.3:.6);
     const e=ctx.createGain();e.connect(rb);e.gain.setValueAtTime(0,t);
     if(k===2){
       const s=ctx.createBufferSource(),hp=ctx.createBiquadFilter();s.buffer=nzb;hp.type='highpass';hp.frequency.value=4500;
@@ -244,14 +252,14 @@ function startTex(){
       dl.start();os.push(dl);nodes.push(dl);
       v.connect(lp2);lp2.connect(pn);pn.connect(g);fl.push(lp2);tex.pf.push(lp2);
     });
-    return{g,os,fl};
+    return{g,os,fl,rev:PD.map(df=>rOn('pad',nt(df,dg),t0,60,0))};
   };
   let pad=null,pd=-1;
   const padTick=()=>{
     if(tex!==me)return;
     if(deg!==pd){
       const t=ctx.currentTime;
-      if(pad){const p=pad;p.g.gain.cancelScheduledValues(t);p.g.gain.setValueAtTime(p.g.gain.value,t);p.g.gain.setTargetAtTime(0,t,S.chRel/3);setTimeout(()=>{p.os.forEach(o=>{try{o.stop()}catch(e){}});if(tex&&tex.pf)tex.pf=tex.pf.filter(f=>!p.fl.includes(f))},(S.chRel*2+4)*1000)}
+      if(pad){const p=pad;p.rev.forEach(e=>rOff(e,t+S.chRel*.9));p.g.gain.cancelScheduledValues(t);p.g.gain.setValueAtTime(p.g.gain.value,t);p.g.gain.setTargetAtTime(0,t,S.chRel/3);setTimeout(()=>{p.os.forEach(o=>{try{o.stop()}catch(e){}});if(tex&&tex.pf)tex.pf=tex.pf.filter(f=>!p.fl.includes(f))},(S.chRel*2+4)*1000)}
       pad=mkPad(deg,S.chAtk);pd=deg;
     }
     setTimeout(padTick,2000);
@@ -261,6 +269,7 @@ function startTex(){
 }
 function stopTex(){
   const t=tex;tex=null;if(!t)return;
+  finishRec();
   clearTimeout(t.timer);
   const now=ctx.currentTime;
   t.out.gain.cancelScheduledValues(now);
@@ -269,15 +278,66 @@ function stopTex(){
   setTimeout(()=>t.nodes.forEach(n=>{try{n.stop()}catch(e){}}),3000);
 }
 
+/* registrazione MIDI */
+let REC=null,TAKE=null;
+const mp=document.getElementById('mp');
+const rOn=(l,n,t,v,ch)=>{if(!REC)return null;const e={n:Math.max(0,Math.min(127,Math.round(n))),s:t,e:null,v:Math.max(1,Math.min(127,Math.round(v))),ch:ch};REC.ev[l].push(e);return e};
+const rOff=(e,t)=>{if(e&&e.e===null)e.e=Math.max(e.s+.05,t)};
+function smf(ev,bpm,name){
+  const PPQ=480,tk=s=>Math.round(s*bpm/60*PPQ);
+  const ns=ev.slice().sort((a,b)=>a.s-b.s),last={};
+  ns.forEach(e=>{const k=e.ch+':'+e.n,p=last[k];if(p&&p.e>e.s)p.e=Math.max(p.s+.01,e.s);last[k]=e});
+  const L=[];
+  ns.forEach(e=>{const a=tk(e.s),b=Math.max(a+1,tk(e.e));L.push([a,1,e.ch,e.n,e.v],[b,0,e.ch,e.n,0])});
+  L.sort((x,y)=>x[0]-y[0]||x[1]-y[1]);
+  const vlq=n=>{const b=[n&127];while(n>>=7)b.unshift((n&127)|128);return b};
+  const nm=Array.from(name).map(c=>c.charCodeAt(0)&127),mpq=Math.round(60000000/bpm),o=[];
+  o.push(0,255,3,nm.length,...nm,0,255,81,3,(mpq>>16)&255,(mpq>>8)&255,mpq&255,0,255,88,4,4,2,24,8);
+  let pt=0;
+  L.forEach(x=>{o.push(...vlq(x[0]-pt),(x[1]?144:128)|x[2],x[3],x[4]);pt=x[0]});
+  o.push(0,255,47,0);
+  const n=o.length;
+  return new Uint8Array([77,84,104,100,0,0,0,6,0,0,0,1,PPQ>>8,PPQ&255,77,84,114,107,(n>>24)&255,(n>>16)&255,(n>>8)&255,n&255,...o]);
+}
+function finishRec(){
+  if(!REC)return;
+  const R0=REC;REC=null;
+  const end=ctx.currentTime+2,files={};let n=0,dur=0;
+  Object.keys(R0.ev).forEach(l=>{
+    const ev=R0.ev[l];if(!ev.length)return;
+    ev.forEach(e=>{if(e.e===null)e.e=end;e.s-=R0.t0;e.e-=R0.t0;dur=Math.max(dur,e.e)});
+    files[l]=smf(ev,R0.bpm,'M87 '+l);n++;
+  });
+  if(!n)return;
+  const d=new Date(),z=x=>String(x).padStart(2,'0');
+  TAKE={files,stamp:''+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'-'+z(d.getHours())+z(d.getMinutes())};
+  ms.textContent='Last take: '+Math.floor(dur/60)+':'+z(Math.floor(dur%60))+' \u00b7 '+n+' files';
+  mbtn.disabled=false;mp.style.display='block';
+  setTimeout(()=>{mp.style.display='none'},20000);
+}
+async function saveTake(){
+  if(!TAKE)return;
+  const files=Object.keys(TAKE.files).map(k=>new File([TAKE.files[k]],'M87_'+k+'_'+TAKE.stamp+'.mid',{type:'audio/midi'}));
+  try{
+    if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files:files,title:'M87 MIDI'});return}
+  }catch(e){if(e&&e.name==='AbortError')return}
+  files.forEach((f,i)=>setTimeout(()=>{
+    const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  },i*350));
+}
+mp.onclick=()=>{saveTake();mp.style.display='none'};
+
 /* etichetta */
 let labT=0;
 function setLab(s,ms){lab.textContent=s;lab.style.opacity=1;clearTimeout(labT);if(ms)labT=setTimeout(()=>lab.style.opacity=0,ms)}
 function hideLab(){clearTimeout(labT);lab.style.opacity=0}
 
 /* impostazioni */
-const DEF={vol:.8,rev:.85,lvD:1,lvA:1,lvO:1,lvR:.8,lvP:.7,padIn:15,pFilt:.4,pDet:7,dens:.5,bpm:46,arpIn:12,orgIn:25,rhIn:45,rFilt:.54,rRate:1,rPat:-1,chord:23,chAtk:14,chRel:20,key:-1,mode:-1,tex:-1,def:1,eqP:-1,eqLc:30,eqLo:0,eqMi:0,eqHi:0};
+const DEF={vol:.8,rev:.85,lvD:1,lvA:1,lvO:1,lvR:.8,lvP:.7,padIn:15,pFilt:.4,pDet:7,dens:.5,bpm:46,arpIn:12,orgIn:25,rhIn:45,rFilt:.54,rRate:1,rPat:-1,chord:23,chAtk:14,chRel:20,key:-1,mode:-1,tex:-1,def:1,eqP:-1,eqLc:30,eqLo:0,eqMi:0,eqHi:0,midi:-1};
 const S=Object.assign({},DEF);
 try{Object.assign(S,JSON.parse(localStorage.getItem('sfera-settings')||'{}'))}catch(e){}
+S.midi=-1;
 const save=()=>{try{localStorage.setItem('sfera-settings',JSON.stringify(S))}catch(e){}};
 function apply(k){
   if(!ctx)return;const t=ctx.currentTime,m={lvD:'d',lvA:'a',lvO:'o',lvR:'r',lvP:'p'};
@@ -299,7 +359,7 @@ const SPEC=[['Sphere'],['Texture','tex',['Stardust','Grid','Mist','Needles','Wav
 ['Timing'],['Heartbeat','bpm',30,90,1,v=>v+' bpm'],['Arpeggio enters after','arpIn',0,180,1,v=>v+' s'],['Organ enters after','orgIn',0,300,1,v=>v+' s'],['Chord changes every','chord',10,90,1,v=>v+' s'],['Chord attack','chAtk',3,30,1,v=>v+' s'],['Chord release','chRel',3,60,1,v=>v+' s'],['Rhythm enters after','rhIn',0,300,1,v=>v+' s'],['Pad enters after','padIn',0,300,1,v=>v+' s'],
 ['Rhythm'],['Filter','rFilt',0,1,.01,v=>Math.round(150*Math.pow(60,v))+' Hz'],['Pattern','rPat',['Auto','Long','Euclidean','Syncopated']],['Rate','rRate',['×1/4','×1/2','×1','×2']],
 ['Pad'],['Filter','pFilt',0,1,.01,v=>Math.round(200*Math.pow(20,v))+' Hz'],['Analog detune','pDet',0,25,.5,v=>v+' cents'],
-['Harmony'],['Key','key',['Auto','C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B']],['Mode','mode',['Auto','Lydian','Major','Mixolydian','Dorian','Aeolian']]];
+['Harmony'],['Key','key',['Auto','C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B']],['Mode','mode',['Auto','Lydian','Major','Mixolydian','Dorian','Aeolian']],['MIDI'],['Record next take','midi',['Off','On']]];
 const rows=document.getElementById('rows'),panel=document.getElementById('panel');
 SPEC.forEach(sp=>{
   if(sp.length===1){const h=document.createElement('h2');h.textContent=sp[0];rows.appendChild(h);return}
@@ -316,6 +376,10 @@ SPEC.forEach(sp=>{
   }
   rows.appendChild(d);
 });
+const mbx=document.createElement('div'),ms=document.createElement('span'),mbtn=document.createElement('button');
+mbx.className='row';ms.style.cssText='flex:1;color:var(--mut);font-size:14px';
+ms.textContent='Turn on, then touch the sphere: the take is recorded until you touch it again.';
+mbtn.textContent='Save last take';mbtn.disabled=true;mbtn.onclick=saveTake;mbx.append(ms,mbtn);rows.appendChild(mbx);
 const eqp=rows.querySelector('[data-k=eqP]');
 const EQP=[{eqLc:30,eqLo:0,eqMi:0,eqHi:0},{eqLc:40,eqLo:3,eqMi:-1.5,eqHi:-3},{eqLc:60,eqLo:-1,eqMi:0,eqHi:4},{eqLc:50,eqLo:1,eqMi:-3,eqHi:-4}];
 eqp.addEventListener('input',()=>{const p=EQP[+eqp.value];if(!p)return;Object.assign(S,p);rows.querySelectorAll('input[data-k^=eq]').forEach(el=>{el.value=S[el.dataset.k];el.dispatchEvent(new Event('input'))});S.eqP=-1;eqp.value=-1;save()});
