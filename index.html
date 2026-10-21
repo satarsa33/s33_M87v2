@@ -283,7 +283,7 @@ let REC=null,TAKE=null;
 const mp=document.getElementById('mp');
 const rOn=(l,n,t,v,ch)=>{if(!REC)return null;const e={n:Math.max(0,Math.min(127,Math.round(n))),s:t,e:null,v:Math.max(1,Math.min(127,Math.round(v))),ch:ch};REC.ev[l].push(e);return e};
 const rOff=(e,t)=>{if(e&&e.e===null)e.e=Math.max(e.s+.05,t)};
-function smf(ev,bpm,name){
+function smf(ev,bpm,name,total){
   const PPQ=480,tk=s=>Math.round(s*bpm/60*PPQ);
   const ns=ev.slice().sort((a,b)=>a.s-b.s),last={};
   ns.forEach(e=>{const k=e.ch+':'+e.n,p=last[k];if(p&&p.e>e.s)p.e=Math.max(p.s+.01,e.s);last[k]=e});
@@ -292,10 +292,10 @@ function smf(ev,bpm,name){
   L.sort((x,y)=>x[0]-y[0]||x[1]-y[1]);
   const vlq=n=>{const b=[n&127];while(n>>=7)b.unshift((n&127)|128);return b};
   const nm=Array.from(name).map(c=>c.charCodeAt(0)&127),mpq=Math.round(60000000/bpm),o=[];
-  o.push(0,255,3,nm.length,...nm,0,255,81,3,(mpq>>16)&255,(mpq>>8)&255,mpq&255,0,255,88,4,4,2,24,8);
+  o.push(0,255,3,nm.length,...nm,0,255,81,3,(mpq>>16)&255,(mpq>>8)&255,mpq&255,0,255,88,4,4,2,24,8,0,176,7,100);
   let pt=0;
   L.forEach(x=>{o.push(...vlq(x[0]-pt),(x[1]?144:128)|x[2],x[3],x[4]);pt=x[0]});
-  o.push(0,255,47,0);
+  o.push(...vlq(Math.max(0,total-pt)),255,47,0);
   const n=o.length;
   return new Uint8Array([77,84,104,100,0,0,0,6,0,0,0,1,PPQ>>8,PPQ&255,77,84,114,107,(n>>24)&255,(n>>16)&255,(n>>8)&255,n&255,...o]);
 }
@@ -303,11 +303,9 @@ function finishRec(){
   if(!REC)return;
   const R0=REC;REC=null;
   const end=ctx.currentTime+2,files={};let n=0,dur=0;
-  Object.keys(R0.ev).forEach(l=>{
-    const ev=R0.ev[l];if(!ev.length)return;
-    ev.forEach(e=>{if(e.e===null)e.e=end;e.s-=R0.t0;e.e-=R0.t0;dur=Math.max(dur,e.e)});
-    files[l]=smf(ev,R0.bpm,'M87 '+l);n++;
-  });
+  Object.keys(R0.ev).forEach(l=>{R0.ev[l].forEach(e=>{if(e.e===null)e.e=end;e.s-=R0.t0;e.e-=R0.t0;dur=Math.max(dur,e.e)})});
+  const total=Math.max(1,Math.ceil(dur*R0.bpm/60*480/1920))*1920;
+  Object.keys(R0.ev).forEach(l=>{const ev=R0.ev[l];if(!ev.length)return;files[l]=smf(ev,R0.bpm,'M87 '+l,total);n++});
   if(!n)return;
   const d=new Date(),z=x=>String(x).padStart(2,'0');
   TAKE={files,stamp:''+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'-'+z(d.getHours())+z(d.getMinutes())};
@@ -315,9 +313,37 @@ function finishRec(){
   mbtn.disabled=false;mp.style.display='block';
   setTimeout(()=>{mp.style.display='none'},20000);
 }
+function crc32(b){
+  let c,t=crc32.t;
+  if(!t){t=crc32.t=[];for(let n=0;n<256;n++){c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}}
+  c=-1;for(let i=0;i<b.length;i++)c=t[(c^b[i])&255]^(c>>>8);
+  return(c^-1)>>>0;
+}
+function zipStore(list){
+  const enc=new TextEncoder(),parts=[],cen=[];let off=0;
+  const d=new Date(),dt=(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1),dd=((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate();
+  list.forEach(f=>{
+    const nm=enc.encode(f.name),crc=crc32(f.data),sz=f.data.length;
+    const lh=new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true);lh.setUint16(4,20,true);lh.setUint16(6,0x0800,true);lh.setUint16(10,dt,true);lh.setUint16(12,dd,true);
+    lh.setUint32(14,crc,true);lh.setUint32(18,sz,true);lh.setUint32(22,sz,true);lh.setUint16(26,nm.length,true);
+    parts.push(new Uint8Array(lh.buffer),nm,f.data);
+    const ch=new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true);ch.setUint16(4,20,true);ch.setUint16(6,20,true);ch.setUint16(8,0x0800,true);ch.setUint16(12,dt,true);ch.setUint16(14,dd,true);
+    ch.setUint32(16,crc,true);ch.setUint32(20,sz,true);ch.setUint32(24,sz,true);ch.setUint16(28,nm.length,true);ch.setUint32(42,off,true);
+    cen.push(new Uint8Array(ch.buffer),nm);
+    off+=30+nm.length+sz;
+  });
+  const cs=cen.reduce((a,x)=>a+x.length,0),end=new DataView(new ArrayBuffer(22));
+  end.setUint32(0,0x06054b50,true);end.setUint16(8,list.length,true);end.setUint16(10,list.length,true);end.setUint32(12,cs,true);end.setUint32(16,off,true);
+  return new Blob([...parts,...cen,new Uint8Array(end.buffer)],{type:'application/zip'});
+}
 async function saveTake(){
   if(!TAKE)return;
-  const files=Object.keys(TAKE.files).map(k=>new File([TAKE.files[k]],'M87_'+k+'_'+TAKE.stamp+'.mid',{type:'audio/midi'}));
+  const names=Object.keys(TAKE.files),nm=k=>'M87_'+k+'_'+TAKE.stamp+'.mid';
+  const files=S.mfmt<0
+    ?[new File([zipStore(names.map(k=>({name:nm(k),data:TAKE.files[k]})))],'M87_midi_'+TAKE.stamp+'.zip',{type:'application/zip'})]
+    :names.map(k=>new File([TAKE.files[k]],nm(k),{type:'audio/midi'}));
   try{
     if(navigator.canShare&&navigator.canShare({files})){await navigator.share({files:files,title:'M87 MIDI'});return}
   }catch(e){if(e&&e.name==='AbortError')return}
@@ -334,7 +360,7 @@ function setLab(s,ms){lab.textContent=s;lab.style.opacity=1;clearTimeout(labT);i
 function hideLab(){clearTimeout(labT);lab.style.opacity=0}
 
 /* impostazioni */
-const DEF={vol:.8,rev:.85,lvD:1,lvA:1,lvO:1,lvR:.8,lvP:.7,padIn:15,pFilt:.4,pDet:7,dens:.5,bpm:46,arpIn:12,orgIn:25,rhIn:45,rFilt:.54,rRate:1,rPat:-1,chord:23,chAtk:14,chRel:20,key:-1,mode:-1,tex:-1,def:1,eqP:-1,eqLc:30,eqLo:0,eqMi:0,eqHi:0,midi:-1};
+const DEF={vol:.8,rev:.85,lvD:1,lvA:1,lvO:1,lvR:.8,lvP:.7,padIn:15,pFilt:.4,pDet:7,dens:.5,bpm:46,arpIn:12,orgIn:25,rhIn:45,rFilt:.54,rRate:1,rPat:-1,chord:23,chAtk:14,chRel:20,key:-1,mode:-1,tex:-1,def:1,eqP:-1,eqLc:30,eqLo:0,eqMi:0,eqHi:0,midi:-1,mfmt:-1};
 const S=Object.assign({},DEF);
 try{Object.assign(S,JSON.parse(localStorage.getItem('sfera-settings')||'{}'))}catch(e){}
 S.midi=-1;
@@ -359,7 +385,7 @@ const SPEC=[['Sphere'],['Texture','tex',['Stardust','Grid','Mist','Needles','Wav
 ['Timing'],['Heartbeat','bpm',30,90,1,v=>v+' bpm'],['Arpeggio enters after','arpIn',0,180,1,v=>v+' s'],['Organ enters after','orgIn',0,300,1,v=>v+' s'],['Chord changes every','chord',10,90,1,v=>v+' s'],['Chord attack','chAtk',3,30,1,v=>v+' s'],['Chord release','chRel',3,60,1,v=>v+' s'],['Rhythm enters after','rhIn',0,300,1,v=>v+' s'],['Pad enters after','padIn',0,300,1,v=>v+' s'],
 ['Rhythm'],['Filter','rFilt',0,1,.01,v=>Math.round(150*Math.pow(60,v))+' Hz'],['Pattern','rPat',['Auto','Long','Euclidean','Syncopated']],['Rate','rRate',['×1/4','×1/2','×1','×2']],
 ['Pad'],['Filter','pFilt',0,1,.01,v=>Math.round(200*Math.pow(20,v))+' Hz'],['Analog detune','pDet',0,25,.5,v=>v+' cents'],
-['Harmony'],['Key','key',['Auto','C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B']],['Mode','mode',['Auto','Lydian','Major','Mixolydian','Dorian','Aeolian']],['MIDI'],['Record next take','midi',['Off','On']]];
+['Harmony'],['Key','key',['Auto','C','C♯','D','E♭','E','F','F♯','G','A♭','A','B♭','B']],['Mode','mode',['Auto','Lydian','Major','Mixolydian','Dorian','Aeolian']],['MIDI'],['Record next take','midi',['Off','On']],['Export as','mfmt',['One ZIP file','Separate files']]];
 const rows=document.getElementById('rows'),panel=document.getElementById('panel');
 SPEC.forEach(sp=>{
   if(sp.length===1){const h=document.createElement('h2');h.textContent=sp[0];rows.appendChild(h);return}
